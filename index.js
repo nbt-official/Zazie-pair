@@ -1,12 +1,22 @@
-const { default: makeWASocket, useMultiFileAuthState, delay, Browsers, DisconnectReason } = require("@whiskeysockets/baileys");
+const express = require('express');
+const fs = require('fs-extra');
 const mongoose = require("mongoose");
 const pino = require("pino");
-const express = require("express");
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    delay,
+    makeCacheableSignalKeyStore,
+    Browsers,
+    jidNormalizedUser
+} = require("@whiskeysockets/baileys");
+
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-// MongoDB Connection String (Directly Added)
+// MongoDB Connection
 const mongoURI = "mongodb+srv://nethmadhu01_db_user:ItHcjbTkGzQQssCw@cluster0.vfvc2mo.mongodb.net/?appName=Cluster0";
+mongoose.connect(mongoURI).then(() => console.log("DB Connected ✔️"));
 
 // DB Schema
 const Session = mongoose.models.Session || mongoose.model('Session', new mongoose.Schema({
@@ -15,66 +25,69 @@ const Session = mongoose.models.Session || mongoose.model('Session', new mongoos
     createdAt: { type: Date, default: Date.now, expires: '30d' }
 }));
 
-// MongoDB Connect
-mongoose.connect(mongoURI).then(() => console.log("MongoDB Connected ✔️")).catch(err => console.log(err));
+app.get('/pair', async (req, res) => {
+    let num = req.query.number;
+    if (!num) return res.send({ error: "Number Required" });
 
-app.get('/', (req, res) => {
-    res.send(`
-        <div style="font-family:sans-serif; text-align:center; margin-top:50px; background:#0f172a; color:white; padding:50px; border-radius:15px;">
-            <h2>Frozen MD Pairing Panel</h2>
-            <p>Enter your number with country code (e.g. 94762898541)</p>
-            <input type="text" id="num" placeholder="947xxxxxxxx" style="padding:12px; border-radius:8px; border:none; width:250px;">
-            <button onclick="getCode()" style="padding:12px 25px; border-radius:8px; border:none; background:#3b82f6; color:white; cursor:pointer; font-weight:bold;">Get Pairing Code</button>
-            <h1 id="code" style="color:#10b981; margin-top:30px; letter-spacing:5px;"></h1>
-            <script>
-                async function getCode() {
-                    const n = document.getElementById('num').value;
-                    if(!n) return alert('Please enter a number!');
-                    document.getElementById('code').innerText = 'GENERATING...';
-                    try {
-                        const r = await fetch('/pair?number=' + n);
-                        const d = await r.json();
-                        document.getElementById('code').innerText = d.code || 'ERROR';
-                    } catch { document.getElementById('code').innerText = 'FAILED'; }
-                }
-            </script>
-        </div>
-    `);
-});
-
-app.get("/pair", async (req, res) => {
-    const { number } = req.query;
-    if (!number) return res.status(400).json({ error: "No Number" });
+    // Session folder එක හැමතිස්සෙම අලුතින් ගන්නවා
+    const sessionDir = `./temp_session_${Date.now()}`;
+    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
     try {
-        const { state, saveCreds } = await useMultiFileAuthState("./temp_session");
-        const sock = makeWASocket({
-            auth: state,
+        let conn = makeWASocket({
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })),
+            },
             printQRInTerminal: false,
-            logger: pino({ level: "silent" }),
-            browser: ["Ubuntu", "Chrome", "20.0.04"]
+            logger: pino({ level: "fatal" }),
+            browser: Browsers.macOS("Safari"),
         });
 
-        if (!sock.authState.creds.registered) {
-            await delay(2500);
-            const code = await sock.requestPairingCode(number.replace(/[^0-9]/g, ''));
-            
-            sock.ev.on("creds.update", saveCreds);
-            sock.ev.on("connection.update", async (up) => {
-                const { connection } = up;
-                if (connection === "open") {
-                    const id = Math.random().toString(36).substring(2, 12);
-                    await Session.create({ sessionId: id, sessionData: sock.authState.creds });
-                    await sock.sendMessage(sock.user.id, { text: `FROZEN-MD~${id}` });
-                    console.log("Session Saved: " + id);
-                    process.exit(0); // Exit after pairing to clear memory
-                }
-            });
-            return res.json({ code });
+        if (!conn.authState.creds.registered) {
+            await delay(1500);
+            num = num.replace(/[^0-9]/g, '');
+            const code = await conn.requestPairingCode(num);
+            if (!res.headersSent) {
+                res.send({ code });
+            }
         }
-    } catch (e) { res.status(500).json({ error: "Try Again" }); }
+
+        conn.ev.on('creds.update', saveCreds);
+
+        conn.ev.on("connection.update", async (s) => {
+            const { connection } = s;
+            if (connection === "open") {
+                await delay(5000); // Creds සේරම ලියවෙනකම් පොඩ්ඩක් ඉන්න
+                
+                const id = Math.random().toString(36).substring(2, 12);
+                const user_jid = jidNormalizedUser(conn.user.id);
+
+                // MongoDB වලට Save කරනවා
+                await Session.create({
+                    sessionId: id,
+                    sessionData: conn.authState.creds
+                });
+
+                // User ගේ Inbox එකට ID එක යවනවා
+                await conn.sendMessage(user_jid, { text: `FROZEN-MD~${id}` });
+
+                console.log("Session Saved ID: " + id);
+                
+                // Cleanup
+                await delay(2000);
+                fs.removeSync(sessionDir);
+                // process.exit(0); // Vercel වලට මේක එපා, Render නම් දාන්න
+            }
+        });
+
+    } catch (err) {
+        console.log(err);
+        if (!res.headersSent) res.send({ error: "Service Error" });
+    }
 });
 
+// Bot එකට Session එක දෙන API එක
 app.get("/api/session", async (req, res) => {
     const { id } = req.query;
     const data = await Session.findOne({ sessionId: id });
@@ -82,4 +95,4 @@ app.get("/api/session", async (req, res) => {
     res.json(data.sessionData);
 });
 
-app.listen(PORT, () => console.log("Server online on " + PORT));
+app.listen(PORT, () => console.log(`Server running on ${PORT}`));
