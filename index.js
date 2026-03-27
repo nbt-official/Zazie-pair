@@ -1,98 +1,116 @@
-const express = require('express');
-const fs = require('fs-extra');
-const mongoose = require("mongoose");
-const pino = require("pino");
-const {
-    default: makeWASocket,
+import express from "express"
+import mongoose from "mongoose"
+import fs from "fs"
+import path from "path"
+import { fileURLToPath } from "url"
+import { v4 as uuidv4 } from "uuid"
+import makeWASocket, {
     useMultiFileAuthState,
-    delay,
-    makeCacheableSignalKeyStore,
-    Browsers,
-    jidNormalizedUser
-} = require("@whiskeysockets/baileys");
+    DisconnectReason
+} from "@whiskeysockets/baileys"
 
-const app = express();
-const PORT = process.env.PORT || 8000;
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
-// MongoDB Connection
-const mongoURI = "mongodb+srv://nethmadhu01_db_user:ItHcjbTkGzQQssCw@cluster0.vfvc2mo.mongodb.net/?appName=Cluster0";
-mongoose.connect(mongoURI).then(() => console.log("DB Connected ✔️"));
+const app = express()
+app.use(express.json())
 
-// DB Schema
-const Session = mongoose.models.Session || mongoose.model('Session', new mongoose.Schema({
+const PORT = process.env.PORT || 3000
+
+// ===== MongoDB =====
+mongoose.connect(process.env.MONGO_URI)
+.then(() => console.log("MongoDB Connected"))
+.catch(err => console.log(err))
+
+const SessionSchema = new mongoose.Schema({
     sessionId: String,
-    sessionData: Object,
-    createdAt: { type: Date, default: Date.now, expires: '30d' }
-}));
+    creds: Object
+})
 
-app.get('/pair', async (req, res) => {
-    let num = req.query.number;
-    if (!num) return res.send({ error: "Number Required" });
+const Session = mongoose.model("Session", SessionSchema)
 
-    // Session folder එක හැමතිස්සෙම අලුතින් ගන්නවා
-    const sessionDir = `./temp_session_${Date.now()}`;
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+// ===== Pair Function =====
+async function startPairing(number) {
+    const sessionId = uuidv4()
+    const sessionPath = path.join(__dirname, "sessions", sessionId)
 
-    try {
-        let conn = makeWASocket({
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })),
-            },
-            printQRInTerminal: false,
-            logger: pino({ level: "fatal" }),
-            browser: Browsers.macOS("Safari"),
-        });
+    if (!fs.existsSync(sessionPath)) {
+        fs.mkdirSync(sessionPath, { recursive: true })
+    }
 
-        if (!conn.authState.creds.registered) {
-            await delay(1500);
-            num = num.replace(/[^0-9]/g, '');
-            const code = await conn.requestPairingCode(num);
-            if (!res.headersSent) {
-                res.send({ code });
-            }
+    const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
+
+    const sock = makeWASocket({
+        auth: state
+    })
+
+    sock.ev.on("creds.update", saveCreds)
+
+    // 🔑 request pairing code
+    const code = await sock.requestPairingCode(number)
+
+    sock.ev.on("connection.update", async (update) => {
+        const { connection } = update
+
+        if (connection === "open") {
+            console.log("✅ Connected:", sessionId)
+
+            const creds = JSON.parse(
+                fs.readFileSync(path.join(sessionPath, "creds.json"))
+            )
+
+            await Session.findOneAndUpdate(
+                { sessionId },
+                { creds },
+                { upsert: true }
+            )
+
+            await sock.sendMessage(
+                number + "@s.whatsapp.net",
+                { text: `✅ Session ID: ${sessionId}` }
+            )
         }
+    })
 
-        conn.ev.on('creds.update', saveCreds);
+    return { sessionId, code }
+}
 
-        conn.ev.on("connection.update", async (s) => {
-            const { connection } = s;
-            if (connection === "open") {
-                await delay(5000); // Creds සේරම ලියවෙනකම් පොඩ්ඩක් ඉන්න
-                
-                const id = Math.random().toString(36).substring(2, 12);
-                const user_jid = jidNormalizedUser(conn.user.id);
+// ===== ROUTES =====
 
-                // MongoDB වලට Save කරනවා
-                await Session.create({
-                    sessionId: id,
-                    sessionData: conn.authState.creds
-                });
+// pairing API
+app.post("/pair", async (req, res) => {
+    try {
+        let { number } = req.body
 
-                // User ගේ Inbox එකට ID එක යවනවා
-                await conn.sendMessage(user_jid, { text: `FROZEN-MD~${id}` });
+        if (!number) return res.status(400).send("Number required")
 
-                console.log("Session Saved ID: " + id);
-                
-                // Cleanup
-                await delay(2000);
-                fs.removeSync(sessionDir);
-                // process.exit(0); // Vercel වලට මේක එපා, Render නම් දාන්න
-            }
-        });
+        number = number.replace(/[^0-9]/g, "")
+
+        const data = await startPairing(number)
+
+        res.json(data)
 
     } catch (err) {
-        console.log(err);
-        if (!res.headersSent) res.send({ error: "Service Error" });
+        console.log(err)
+        res.status(500).send("Error pairing")
     }
-});
+})
 
-// Bot එකට Session එක දෙන API එක
-app.get("/api/session", async (req, res) => {
-    const { id } = req.query;
-    const data = await Session.findOne({ sessionId: id });
-    if (!data) return res.status(404).send("Not Found");
-    res.json(data.sessionData);
-});
+// download session
+app.get("/session/:id", async (req, res) => {
+    const session = await Session.findOne({ sessionId: req.params.id })
 
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+    if (!session) return res.status(404).send("Not found")
+
+    res.setHeader("Content-Disposition", "attachment; filename=creds.json")
+    res.json(session.creds)
+})
+
+// serve HTML
+app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, "index.html"))
+})
+
+app.listen(PORT, () => {
+    console.log("Server running:", PORT)
+})
