@@ -13,12 +13,10 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const app = express()
-app.use(express.json())
-
 const PORT = process.env.PORT || 3000
 
 // ===== MongoDB =====
-mongoose.connect(process.env.MONGO_URI)
+mongoose.connect("mongodb+srv://nethmadhu01_db_user:ItHcjbTkGzQQssCw@cluster0.vfvc2mo.mongodb.net/?appName=Cluster0")
 .then(() => console.log("MongoDB Connected"))
 .catch(err => console.log(err))
 
@@ -46,11 +44,21 @@ async function startPairing(number) {
 
     sock.ev.on("creds.update", saveCreds)
 
-    // 🔑 request pairing code
+    // 🔥 IMPORTANT: wait until socket ready
+    await new Promise((resolve) => {
+        sock.ev.on("connection.update", (update) => {
+            if (update.qr || update.connection === "connecting") {
+                resolve()
+            }
+        })
+    })
+
+    // 🔑 NOW request pairing code
     const code = await sock.requestPairingCode(number)
 
+    // listen for connection
     sock.ev.on("connection.update", async (update) => {
-        const { connection } = update
+        const { connection, lastDisconnect } = update
 
         if (connection === "open") {
             console.log("✅ Connected:", sessionId)
@@ -70,33 +78,45 @@ async function startPairing(number) {
                 { text: `✅ Session ID: ${sessionId}` }
             )
         }
+
+        if (connection === "close") {
+            const reason = lastDisconnect?.error?.output?.statusCode
+
+            if (reason !== DisconnectReason.loggedOut) {
+                console.log("Reconnecting...")
+            }
+        }
     })
 
     return { sessionId, code }
 }
 
-// ===== ROUTES =====
-
-// pairing API
-app.post("/pair", async (req, res) => {
+// ===== ROUTE (GET) =====
+app.get("/pair", async (req, res) => {
     try {
-        let { number } = req.body
+        let number = req.query.number
 
-        if (!number) return res.status(400).send("Number required")
+        if (!number) {
+            return res.send("❌ Use: /pair?number=947XXXXXXXX")
+        }
 
         number = number.replace(/[^0-9]/g, "")
 
         const data = await startPairing(number)
 
-        res.json(data)
+        res.json({
+            status: "success",
+            sessionId: data.sessionId,
+            code: data.code
+        })
 
     } catch (err) {
         console.log(err)
-        res.status(500).send("Error pairing")
+        res.status(500).send("Pairing error")
     }
 })
 
-// download session
+// ===== Download session =====
 app.get("/session/:id", async (req, res) => {
     const session = await Session.findOne({ sessionId: req.params.id })
 
@@ -106,11 +126,11 @@ app.get("/session/:id", async (req, res) => {
     res.json(session.creds)
 })
 
-// serve HTML
+// ===== Home =====
 app.get("/", (req, res) => {
-    res.sendFile(path.join(__dirname, "index.html"))
+    res.send("✅ Pair API Ready → /pair?number=947XXXXXXXX")
 })
 
 app.listen(PORT, () => {
-    console.log("Server running:", PORT)
+    console.log("Server running on", PORT)
 })
