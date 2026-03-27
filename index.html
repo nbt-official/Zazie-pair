@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WhatsApp Pair</title>
+</head>
+<body style="font-family: Arial; text-align:center; margin-top:50px;">
+
+    <h2>📱 WhatsApp Pairing</h2>
+
+    <input id="number" placeholder="947XXXXXXXX" style="padding:10px; width:250px;" />
+    <br><br>
+
+    <button onclick="pair()" style="padding:10px 20px;">PAIR</button>
+
+    <h3 id="code"></h3>
+    <h4 id="session"></h4>
+
+    <script>
+        async function pair() {
+            const number = document.getElementById("number").value
+
+            const res = await fetch("/pair", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ number })
+            })
+
+            const data = await res.json()
+
+            document.getElementById("code").innerText = "Pair Code: " + data.code
+            document.getElementById("session").innerText = "Session ID: " + data.sessionId
+        }
+    </script>
+
+</body>
+</html>
