@@ -4,10 +4,13 @@ import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 import { v4 as uuidv4 } from "uuid"
-import makeWASocket, {
+import * as baileys from "@whiskeysockets/baileys"
+
+const {
+    default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason
-} from "@whiskeysockets/baileys"
+} = baileys
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -15,10 +18,12 @@ const __dirname = path.dirname(__filename)
 const app = express()
 const PORT = process.env.PORT || 3000
 
+// 🔐 CHANGE THIS AFTER RESET PASSWORD
+const MONGO_URI = "mongodb+srv://nethmadhu01_db_user:ItHcjbTkGzQQssCw@cluster0.vfvc2mo.mongodb.net/?appName=Cluster0";
 // ===== MongoDB =====
-mongoose.connect("mongodb+srv://nethmadhu01_db_user:ItHcjbTkGzQQssCw@cluster0.vfvc2mo.mongodb.net/?appName=Cluster0")
+mongoose.connect(MONGO_URI)
 .then(() => console.log("✅ MongoDB Connected"))
-.catch(err => console.log("DB Error:", err))
+.catch(err => console.log("❌ DB Error:", err))
 
 const SessionSchema = new mongoose.Schema({
     sessionId: String,
@@ -49,24 +54,19 @@ async function startPairing(number) {
         let codeSent = false
 
         sock.ev.on("connection.update", async (update) => {
-            const { connection, lastDisconnect } = update
+            const { connection } = update
 
             try {
-                // 🔑 generate pairing code once
                 if (!codeSent && connection === "connecting") {
                     codeSent = true
 
                     const code = await sock.requestPairingCode(number)
 
-                    console.log("🔐 Pair Code:", code)
+                    console.log("🔐 CODE:", code)
 
-                    resolve({
-                        sessionId,
-                        code
-                    })
+                    resolve({ sessionId, code })
                 }
 
-                // ✅ connected
                 if (connection === "open") {
                     console.log("✅ Connected:", sessionId)
 
@@ -80,27 +80,14 @@ async function startPairing(number) {
                         { upsert: true }
                     )
 
-                    console.log("💾 Saved to MongoDB")
-
                     await sock.sendMessage(
                         number + "@s.whatsapp.net",
                         { text: `✅ Session ID: ${sessionId}` }
                     )
                 }
 
-                // ❌ reconnect logic
-                if (connection === "close") {
-                    const reason = lastDisconnect?.error?.output?.statusCode
-
-                    if (reason !== DisconnectReason.loggedOut) {
-                        console.log("🔄 Reconnecting...")
-                    } else {
-                        console.log("❌ Logged out")
-                    }
-                }
-
             } catch (err) {
-                console.log("❌ Pair Error:", err)
+                console.log("❌ ERROR:", err)
                 reject(err)
             }
         })
@@ -109,7 +96,7 @@ async function startPairing(number) {
 
 // ===== ROUTES =====
 
-// 👉 GET pairing
+// 👉 pairing
 app.get("/pair", async (req, res) => {
     try {
         let number = req.query.number
@@ -122,18 +109,10 @@ app.get("/pair", async (req, res) => {
 
         const data = await startPairing(number)
 
-        res.json({
-            status: "success",
-            sessionId: data.sessionId,
-            code: data.code
-        })
+        res.json(data)
 
     } catch (err) {
-        console.log("FULL ERROR:", err)
-
-        res.status(500).json({
-            error: err.message || err
-        })
+        res.status(500).json({ error: err.message })
     }
 })
 
@@ -141,17 +120,17 @@ app.get("/pair", async (req, res) => {
 app.get("/session/:id", async (req, res) => {
     const session = await Session.findOne({ sessionId: req.params.id })
 
-    if (!session) return res.status(404).send("Session not found")
+    if (!session) return res.status(404).send("Not found")
 
     res.setHeader("Content-Disposition", "attachment; filename=creds.json")
     res.json(session.creds)
 })
 
-// 👉 serve HTML
+// 👉 home
 app.get("/", (req, res) => {
-    res.sendFile(path.join(__dirname, "index.html"))
+    res.send("🔥 WhatsApp Pair API Ready → /pair?number=947XXXXXXXX")
 })
 
 app.listen(PORT, () => {
-    console.log("🚀 Server running on port", PORT)
+    console.log("🚀 Running on", PORT)
 })
