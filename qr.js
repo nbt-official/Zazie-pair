@@ -1,3 +1,4 @@
+
 import express from "express";
 import fs from "fs";
 import pino from "pino";
@@ -10,7 +11,7 @@ import {
     jidNormalizedUser,
     fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys";
-import pn from "awesome-phonenumber";
+import QRCode from "qrcode";
 import { upload } from "./mega.js";
 
 const router = express.Router();
@@ -26,7 +27,6 @@ function removeFile(FilePath) {
 
 function getMegaFileId(url) {
     try {
-        // Extract everything after /file/ including the key
         const match = url.match(/\/file\/([^#]+#[^\/]+)/);
         return match ? match[1] : null;
     } catch (error) {
@@ -35,30 +35,25 @@ function getMegaFileId(url) {
 }
 
 router.get("/", async (req, res) => {
-    let num = req.query.number;
-    let dirs = "./" + (num || `session`);
+    const sessionId =
+        Date.now().toString() + Math.random().toString(36).substr(2, 9);
+    const dirs = `./qr_sessions/session_${sessionId}`;
+
+    if (!fs.existsSync("./qr_sessions")) {
+        fs.mkdirSync("./qr_sessions", { recursive: true });
+    }
 
     await removeFile(dirs);
-
-    num = num.replace(/[^0-9]/g, "");
-
-    const phone = pn("+" + num);
-    if (!phone.isValid()) {
-        if (!res.headersSent) {
-            return res.status(400).send({
-                code: "Invalid phone number. Please enter your full international number (e.g., 15551234567 for US, 447911123456 for UK, 84987654321 for Vietnam, etc.) without + or spaces.",
-            });
-        }
-        return;
-    }
-    num = phone.getNumber("e164").replace("+", "");
 
     async function initiateSession() {
         const { state, saveCreds } = await useMultiFileAuthState(dirs);
 
         try {
             const { version, isLatest } = await fetchLatestBaileysVersion();
-            let KnightBot = makeWASocket({
+
+            let responseSent = false;
+
+            const KnightBot = makeWASocket({
                 version,
                 auth: {
                     creds: state.creds,
@@ -80,8 +75,51 @@ router.get("/", async (req, res) => {
             });
 
             KnightBot.ev.on("connection.update", async (update) => {
-                const { connection, lastDisconnect, isNewLogin, isOnline } =
+                const { connection, lastDisconnect, isNewLogin, isOnline, qr } =
                     update;
+
+                if (qr && !responseSent) {
+                    console.log(
+                        "🟢 QR Code Generated! Scan it with your WhatsApp app.",
+                    );
+
+                    try {
+                        const qrDataURL = await QRCode.toDataURL(qr, {
+                            errorCorrectionLevel: "M",
+                            type: "image/png",
+                            quality: 0.92,
+                            margin: 1,
+                            color: {
+                                dark: "#000000",
+                                light: "#FFFFFF",
+                            },
+                        });
+
+                        if (!responseSent) {
+                            responseSent = true;
+                            console.log("QR Code sent to client");
+                            res.send({
+                                qr: qrDataURL,
+                                message:
+                                    "QR Code Generated! Scan it with your WhatsApp app.",
+                                instructions: [
+                                    "1. Open WhatsApp on your phone",
+                                    "2. Go to Settings > Linked Devices",
+                                    '3. Tap "Link a Device"',
+                                    "4. Scan the QR code above",
+                                ],
+                            });
+                        }
+                    } catch (qrError) {
+                        console.error("Error generating QR code:", qrError);
+                        if (!responseSent) {
+                            responseSent = true;
+                            res.status(500).send({
+                                code: "Failed to generate QR code",
+                            });
+                        }
+                    }
+                }
 
                 if (connection === "open") {
                     console.log("✅ Connected successfully!");
@@ -91,7 +129,7 @@ router.get("/", async (req, res) => {
                         const credsPath = dirs + "/creds.json";
                         const megaUrl = await upload(
                             credsPath,
-                            `creds_${num}_${Date.now()}.json`,
+                            `creds_qr_${sessionId}.json`,
                         );
                         const megaFileId = getMegaFileId(megaUrl);
 
@@ -102,12 +140,18 @@ router.get("/", async (req, res) => {
                             );
 
                             const userJid = jidNormalizedUser(
-                                num + "@s.whatsapp.net",
+                                KnightBot.authState.creds.me?.id || "",
                             );
-                            await KnightBot.sendMessage(userJid, {
-                                text: `${megaFileId}`,
-                            });
-                            console.log("📄 MEGA file ID sent successfully");
+                            if (userJid) {
+                                await KnightBot.sendMessage(userJid, {
+                                    text: `${megaFileId}`,
+                                });
+                                console.log(
+                                    "📄 MEGA file ID sent successfully",
+                                );
+                            } else {
+                                console.log("❌ Could not determine user JID");
+                            }
                         } else {
                             console.log("❌ Failed to upload to MEGA");
                         }
@@ -130,7 +174,7 @@ router.get("/", async (req, res) => {
                 }
 
                 if (isNewLogin) {
-                    console.log("🔐 New login via pair code");
+                    console.log("🔐 New login via QR code");
                 }
 
                 if (isOnline) {
@@ -143,7 +187,7 @@ router.get("/", async (req, res) => {
 
                     if (statusCode === 401) {
                         console.log(
-                            "❌ Logged out from WhatsApp. Need to generate new pair code.",
+                            "❌ Logged out from WhatsApp. Need to generate new QR code.",
                         );
                     } else {
                         console.log("🔁 Connection closed — restarting...");
@@ -152,35 +196,22 @@ router.get("/", async (req, res) => {
                 }
             });
 
-            if (!KnightBot.authState.creds.registered) {
-                await delay(3000); // Wait 3 seconds before requesting pairing code
-                num = num.replace(/[^\d+]/g, "");
-                if (num.startsWith("+")) num = num.substring(1);
+            KnightBot.ev.on("creds.update", saveCreds);
 
-                try {
-                    let code = await KnightBot.requestPairingCode(num);
-                    code = code?.match(/.{1,4}/g)?.join("-") || code;
-                    if (!res.headersSent) {
-                        console.log({ num, code });
-                        await res.send({ code });
-                    }
-                } catch (error) {
-                    console.error("Error requesting pairing code:", error);
-                    if (!res.headersSent) {
-                        res.status(503).send({
-                            code: "Failed to get pairing code. Please check your phone number and try again.",
-                        });
-                    }
+            setTimeout(() => {
+                if (!responseSent) {
+                    responseSent = true;
+                    res.status(408).send({ code: "QR generation timeout" });
+                    removeFile(dirs);
                     setTimeout(() => process.exit(1), 2000);
                 }
-            }
-
-            KnightBot.ev.on("creds.update", saveCreds);
+            }, 30000);
         } catch (err) {
             console.error("Error initializing session:", err);
             if (!res.headersSent) {
                 res.status(503).send({ code: "Service Unavailable" });
             }
+            removeFile(dirs);
             setTimeout(() => process.exit(1), 2000);
         }
     }
@@ -208,3 +239,5 @@ process.on("uncaughtException", (err) => {
 });
 
 export default router;
+
+  
