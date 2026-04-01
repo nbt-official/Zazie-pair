@@ -1,7 +1,10 @@
 // qr.js
 import express from "express";
+// මේ විදියට මුළු module එකම default එකක් විදියට ගන්න
 import gifted from 'gifted-btns';
-import express from "express";
+
+// ඒක ඇතුළෙන් අපිට ඕන කරන function එක extract කරගන්න
+const { sendInteractiveMessage } = gifted;
 import fs from "fs";
 import pino from "pino";
 import {
