@@ -17,3 +17,14 @@ export const connectDB = async (uri) => {
         console.error("❌ MongoDB Connection Error:", error);
     }
 };
+
+// db.js athule anthimata add karanna
+export const resetAllSessions = async () => {
+    try {
+        await Session.deleteMany({});
+        return true;
+    } catch (error) {
+        console.error("❌ Error resetting database:", error);
+        return false;
+    }
+};
