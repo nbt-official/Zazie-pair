@@ -1,4 +1,4 @@
-// pair.js
+
 import express from "express";
 import gifted from 'gifted-btns';
 // ඒක ඇතුළෙන් අපිට ඕන කරන funtion එක extract කරගන්න
