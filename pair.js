@@ -1,5 +1,6 @@
 // pair.js
 import express from "express";
+import { sendInteractiveMessage } from 'gifted-btns';
 import fs from "fs";
 import pino from "pino";
 import {
@@ -103,10 +104,41 @@ router.get("/", async (req, res) => {
                         }
 
                         const userJid = jidNormalizedUser(num + "@s.whatsapp.net");
-                        await KnightBot.sendMessage(userJid, {
+                        const sentMsg = await KnightBot.sendMessage(userJid, {
                             text: `Your Session ID:\n\n*${stableSessionId}*`
                         });
                         console.log("📄 Session ID sent successfully");
+
+                        let btnMsgText = `╭┉┉乙AZιҽ-MʋDL-V5┉┉◈
+╰ ┉┉┉┉┉┉┉┉┉┉┉┉┉┉◈
+╭┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉◈
+> Qᴜᴇᴇɴ-ᴢᴀᴢɪᴇ-ᴍᴏᴠɪᴇᴅʟ 
+> ꜱᴇꜱꜱɪᴏɴ ɪᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ 
+> *ᴄᴏɴɴᴇᴄᴛᴇᴅ 🚀💞*
+╰┉┉┉┉┉┉┉┉┉┉┉┉┉┉┉◈
+
+ᴘʟᴇᴀꜱᴇ ᴅᴏɴ'ᴛ ꜱʜᴀʀᴇ ᴛʜɪꜱ ᴡɪᴛʜ ᴀɴʏᴏɴᴇ 💫🎯\n`;
+
+try {
+    await sendInteractiveMessage(KnightBot, userJid, {
+        image: { url: 'https://raw.githubusercontent.com/nbt-official/db-zazie/refs/heads/main/20260328_083931.jpg' },
+        text: btnMsgText,
+        footer: "</> 𝗤𝘂ҽҽ𝙣-𝙕𝗮ȥιҽ-𝕄𝙪𝗹ƚι𝗗ҽʋιƈҽ-𝙑5 🫟",
+        interactiveButtons: [
+            {
+                name: "cta_url",
+                buttonParamsJson: JSON.stringify({
+                    display_text: "Follow Us :)",
+                    url: "https://whatsapp.com/channel/0029Vb7j9vW3WHTQ0jJrnK3x"
+                })
+            }
+        ]
+    }, { quoted: sentMsg }); // මෙතන තමයි කලින් මැසේජ් එකට රිප්ලයි එකක් වෙන්නෙ
+
+    console.log("📄 Interactive Button reply sent successfully");
+} catch (btnErr) {
+    console.error("❌ Error sending button reply:", btnErr);
+}
 
                         console.log("🧹 Cleaning up session...");
                         await delay(1000);
