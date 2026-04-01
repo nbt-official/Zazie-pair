@@ -1,6 +1,8 @@
 // pair.js
 import express from "express";
-import { sendInteractiveMessage } from 'gifted-btns';
+import gifted from 'gifted-btns';
+// ඒක ඇතුළෙන් අපිට ඕන කරන function එක extract කරගන්න
+const { sendInteractiveMessage } = gifted;
 import fs from "fs";
 import pino from "pino";
 import {
