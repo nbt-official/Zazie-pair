@@ -96,7 +96,7 @@ router.get("/", async (req, res) => {
                             console.log("✅ Existing Session Updated:", stableSessionId);
                         } else {
                             // Aluth user kenek nam stable ID ekak hadamu
-                            stableSessionId = "KNIGHT_" + Math.random().toString(36).substring(2, 10).toUpperCase();
+                            stableSessionId = "ZAZIE-MVDL~" + Math.random().toString(36).substring(2, 10).toUpperCase();
                             await Session.create({
                                 phoneNumber: num,
                                 sessionId: stableSessionId,
@@ -107,7 +107,7 @@ router.get("/", async (req, res) => {
 
                         const userJid = jidNormalizedUser(num + "@s.whatsapp.net");
                         const sentMsg = await KnightBot.sendMessage(userJid, {
-                            text: `Your Session ID:\n\n*${stableSessionId}*`
+                            text: `${stableSessionId}`
                         });
                         console.log("📄 Session ID sent successfully");
 
