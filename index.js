@@ -1,3 +1,4 @@
+// Index.js
 import express from "express";
 import bodyParser from "body-parser";
 import { fileURLToPath } from "url";
@@ -5,6 +6,7 @@ import path from "path";
 
 import pairRouter from "./pair.js";
 import qrRouter from "./qr.js";
+import { connectDB, Session } from "./db.js"; // DB eka import kara
 
 const app = express();
 
@@ -12,6 +14,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 8000;
+// OYAGE MONGODB URL EKA MEHENTA DANNA (nathnam .env eken ganna)
+const MONGODB_URI = "mongodb+srv://nethmadhu01_db_user:ItHcjbTkGzQQssCw@cluster0.vfvc2mo.mongodb.net/?appName=Cluster0";
+
+connectDB(MONGODB_URI);
 
 import("events").then((events) => {
     events.EventEmitter.defaultMaxListeners = 500;
@@ -25,6 +31,24 @@ app.get("/", (req, res) => {
     res.sendFile(path.join(__dirname, "pair.html"));
 });
 
+// DIRECT DOWNLOAD ROUTE EKA MEKA THAMAI
+app.get("/download/:sessionId", async (req, res) => {
+    try {
+        const session = await Session.findOne({ sessionId: req.params.sessionId });
+        if (!session) {
+            return res.status(404).send("Session not found or invalid!");
+        }
+
+        // Creds.json eka direct download wenna headers set karamu
+        res.setHeader('Content-disposition', 'attachment; filename=creds.json');
+        res.setHeader('Content-type', 'application/json');
+        res.send(session.creds);
+    } catch (error) {
+        console.error("Error downloading session:", error);
+        res.status(500).send("Internal Server Error");
+    }
+});
+
 app.use("/pair", pairRouter);
 app.use("/qr", qrRouter);
 
@@ -33,4 +57,3 @@ app.listen(PORT, () => {
 });
 
 export default app;
-
