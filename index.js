@@ -6,7 +6,7 @@ import path from "path";
 
 import pairRouter from "./pair.js";
 import qrRouter from "./qr.js";
-import { connectDB, Session } from "./db.js"; // DB eka import kara
+import { connectDB, Session, resetAllSessions } from "./db.js"; // DB eka import kara
 
 const app = express();
 
@@ -46,6 +46,35 @@ app.get("/download/:sessionId", async (req, res) => {
     } catch (error) {
         console.error("Error downloading session:", error);
         res.status(500).send("Internal Server Error");
+    }
+});
+
+app.post("/api/admin/reset", async (req, res) => {
+    const { apiKey } = req.body;
+
+    // Security ekata podi key ekak check karamu (Oyata oni ekak danna)
+    const ADMIN_PASSWORD = "NBT"; 
+
+    if (apiKey !== ADMIN_PASSWORD) {
+        return res.status(403).json({ 
+            success: false, 
+            message: "Unauthorized: Invalid Admin API Key" 
+        });
+    }
+
+    const success = await resetAllSessions();
+
+    if (success) {
+        console.log("🧹 Database cleared by Admin request.");
+        res.status(200).json({ 
+            success: true, 
+            message: "All sessions and stable IDs have been wiped successfully!" 
+        });
+    } else {
+        res.status(500).json({ 
+            success: false, 
+            message: "Failed to reset database." 
+        });
     }
 });
 
